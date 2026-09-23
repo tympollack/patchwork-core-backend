@@ -1,0 +1,9 @@
+{
+  "name": "lifecycle-worker-function",
+  "version": "1.0.0",
+  "description": "PatchWork daily lifecycle worker — 7-day bounty triggers and 28-day soft archiving",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0"
+  }
+}

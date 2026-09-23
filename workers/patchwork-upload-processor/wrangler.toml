@@ -1,0 +1,21 @@
+name = "patchwork-upload-processor"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# R2 bucket bindings
+# Secrets (SUPABASE_URL, SUPABASE_SERVICE_KEY) set via: wrangler secret put
+
+[[r2_buckets]]
+binding    = "R2_STAGING"
+bucket_name = "patchwork-ports-stag"
+
+[[r2_buckets]]
+binding    = "R2_PRODUCTION"
+bucket_name = "patchwork-ports"
+
+[[queues.consumers]]
+queue        = "patchwork-upload-queue"
+max_batch_size    = 10
+max_batch_timeout = 30
+max_retries       = 3
+dead_letter_queue = "patchwork-upload-dlq"

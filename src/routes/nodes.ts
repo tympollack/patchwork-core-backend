@@ -11,9 +11,12 @@ const router = Router();
  * Node health state is computed lazily via SQL CASE against NOW().
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
+  const start = Date.now();
   const { min_lat, min_lng, max_lat, max_lng } = req.query;
+  console.log(`[TRACE] GET /api/nodes | params: ${JSON.stringify(req.query)}`);
 
   if (!min_lat || !min_lng || !max_lat || !max_lng) {
+    console.log(`[TRACE] GET /api/nodes | 400 Bad Request: missing params`);
     res.status(400).json({
       error: 'Missing required query parameters: min_lat, min_lng, max_lat, max_lng',
     });
@@ -26,6 +29,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
   const maxLng = parseFloat(max_lng as string);
 
   if ([minLat, minLng, maxLat, maxLng].some(isNaN)) {
+    console.log(`[TRACE] GET /api/nodes | 400 Bad Request: invalid numbers`);
     res.status(400).json({ error: 'All bounding box parameters must be valid numbers.' });
     return;
   }
@@ -53,9 +57,12 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       [minLng, minLat, maxLng, maxLat]
     );
 
+    const elapsed = Date.now() - start;
+    console.log(`[TRACE] GET /api/nodes | 200 OK | ${result.rows.length} nodes | ${elapsed}ms`);
     res.json({ nodes: result.rows });
   } catch (err) {
-    console.error('Error querying nodes:', err);
+    const elapsed = Date.now() - start;
+    console.error(`[TRACE] GET /api/nodes | 500 Error | ${elapsed}ms |`, err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

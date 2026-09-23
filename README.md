@@ -190,9 +190,69 @@ npx expo build:android
 npx expo build:ios
 ```
 
-### Backend
+### Backend (Express — existing)
 
 See backend-specific documentation in `src/` directory.
+
+### Serverless Ingestion API (AWS SAM)
+
+The `sam/` directory contains the Infrastructure-as-Code for the offline-first sync pipeline.
+
+**Prerequisites**
+- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)
+- AWS credentials configured (`aws configure`)
+
+**Install Lambda dependencies**
+
+```bash
+cd sam/functions/sync-nodes
+npm install
+```
+
+**Build & deploy**
+
+```bash
+# From the project root — SAM must be pointed at the nested template
+sam build --template sam/template.yaml
+
+# Interactive guided deploy (first time — saves samconfig.toml)
+sam deploy --template sam/template.yaml --guided
+
+# Subsequent deploys (uses saved config)
+sam deploy --template sam/template.yaml
+```
+
+Deploy with a specific environment:
+
+```bash
+sam deploy --template sam/template.yaml --parameter-overrides Environment=dev
+```
+
+**Local testing with SAM local**
+
+```bash
+# Start a local API Gateway on port 3001
+sam local start-api --template sam/template.yaml --port 3001
+
+# Test the sync endpoint
+curl -X POST http://localhost:3001/api/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nodes": [
+      { "id": "550e8400-e29b-41d4-a716-446655440000", "lat": 37.7749, "lng": -122.4194, "timestamp": 1700000000000, "description": "Pothole on Main St" },
+      { "id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "lat": 40.7128, "lng": -74.0060, "timestamp": 1700000001000 }
+    ]
+  }'
+```
+
+**Infrastructure summary**
+
+| Resource | Type | Notes |
+|---|---|---|
+| `PatchworkNodesTable` | DynamoDB (on-demand) | PK: `h3_index`, SK: `node_id` |
+| `status-index` | DynamoDB GSI | Query nodes by status (active / archived) |
+| `SyncNodesFunction` | Lambda (arm64, Node 20) | Computes H3 Res-10, BatchWriteItem |
+| `PatchworkApi` | API Gateway REST | `POST /api/sync` |
 
 ## 📝 Development Workflow
 

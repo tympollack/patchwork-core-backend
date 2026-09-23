@@ -1,0 +1,10 @@
+{
+  "name": "sync-nodes-function",
+  "version": "1.0.0",
+  "description": "PatchWork ingestion Lambda — computes H3 spatial indexes and writes to DynamoDB",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "h3-js": "^4.1.0"
+  }
+}
