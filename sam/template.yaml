@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  PatchWork Core Backend — Serverless ingestion layer and data lifecycle management.
+  Exposes POST /api/sync for WatermelonDB sync payloads, and runs a daily
+  EventBridge-scheduled worker to enforce 7-day bounty triggers and 28-day soft archiving.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment (controls table/function naming suffix)
+
+  WebhookUrl:
+    Type: String
+    Default: https://api.patchwork.local/webhook/critter-bounty
+    Description: >-
+      Target URL for the critter-bounty webhook fired by the lifecycle worker.
+      Override per environment to point at a real partner endpoint.
+
+# ---------------------------------------------------------------------------
+# Globals — applied to every AWS::Serverless::Function unless overridden
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures: [arm64]      # Graviton2 — cheaper & faster for Node workloads
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref PatchworkNodesTable
+        NODE_ENV: !Ref Environment
+  Api:
+    Cors:
+      AllowMethods: "'POST,OPTIONS'"
+      AllowHeaders: "'Content-Type,Authorization'"
+      AllowOrigin: "'*'"
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # API Gateway (REST — HTTP/1.1, supports usage plans & API keys if needed)
+  # -------------------------------------------------------------------------
+  PatchworkApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub patchwork-api-${Environment}
+      StageName: !Ref Environment
+      Description: PatchWork Core — REST API Gateway
+      TracingEnabled: true   # AWS X-Ray
+
+  # -------------------------------------------------------------------------
+  # Lambda — SyncNodesFunction
+  # Receives WatermelonDB sync payloads, resolves H3 indexes, writes to DynamoDB
+  # -------------------------------------------------------------------------
+  SyncNodesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub patchwork-sync-nodes-${Environment}
+      Description: >
+        Ingests offline-first WatermelonDB sync payloads from the mobile client,
+        computes Uber H3 Resolution-10 spatial indexes, and persists nodes
+        via DynamoDB BatchWriteItem.
+      CodeUri: functions/sync-nodes/
+      Handler: index.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:BatchWriteItem
+                - dynamodb:PutItem
+              Resource:
+                - !GetAtt PatchworkNodesTable.Arn
+                - !Sub ${PatchworkNodesTable.Arn}/index/*
+      Events:
+        SyncPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref PatchworkApi
+            Path: /api/sync
+            Method: POST
+
+  # -------------------------------------------------------------------------
+  # DynamoDB — PatchworkNodes Table
+  #
+  # Access patterns:
+  #   1. Get all nodes in an H3 cell       → PK (h3_index)
+  #   2. Get a specific node               → PK (h3_index) + SK (node_id)
+  #   3. Query nodes by status             → GSI (status-index)
+  # -------------------------------------------------------------------------
+  PatchworkNodesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain    # Prevent accidental data loss on stack updates
+    Properties:
+      TableName: !Sub PatchworkNodes-${Environment}
+      BillingMode: PAY_PER_REQUEST   # On-demand — scales with mobile sync bursts
+
+      # Only attributes used as keys need to be declared here
+      AttributeDefinitions:
+        - AttributeName: h3_index
+          AttributeType: S
+        - AttributeName: node_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: h3_index
+          KeyType: HASH    # Partition Key — Uber H3 hex ID at Resolution 10
+        - AttributeName: node_id
+          KeyType: RANGE   # Sort Key — client-generated UUID
+
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL   # Full item projected — needed for map rendering queries
+
+      # Point-in-Time Recovery — protects against accidental bulk deletes
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+      # Server-side encryption using AWS-owned KMS key (no extra cost)
+      SSESpecification:
+        SSEEnabled: true
+
+      Tags:
+        - Key: Project
+          Value: PatchWork
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -------------------------------------------------------------------------
+  # Lambda — LifecycleWorkerFunction
+  # Triggered daily by EventBridge. Enforces:
+  #   Rule 1 — 7-day bounty trigger  (webhook + DynamoDB flag)
+  #   Rule 2 — 28-day soft archive   (status = 'archived')
+  # -------------------------------------------------------------------------
+  LifecycleWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub patchwork-lifecycle-worker-${Environment}
+      Description: >
+        Daily EventBridge-scheduled worker. Queries the status-index GSI for all
+        awaiting_verification nodes, fires the critter-bounty webhook for nodes
+        older than 7 days (with exponential-backoff retries), and soft-archives
+        nodes older than 28 days by setting status = 'archived'.
+      CodeUri: functions/lifecycle-worker/
+      Handler: index.handler
+      Timeout: 300        # Up to 5 min — handles large node backlogs
+      MemorySize: 256
+      Environment:
+        Variables:
+          WEBHOOK_URL: !Ref WebhookUrl
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+              Resource:
+                - !Sub ${PatchworkNodesTable.Arn}/index/*
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt PatchworkNodesTable.Arn
+      Events:
+        DailyMidnight:
+          Type: Schedule
+          Properties:
+            Name: !Sub patchwork-lifecycle-daily-${Environment}
+            Description: Runs the PatchWork lifecycle worker daily at midnight UTC
+            Schedule: cron(0 0 * * ? *)
+            Enabled: true
+
+  # -------------------------------------------------------------------------
+  # CloudWatch Log Groups — explicit definitions give us retention control
+  # -------------------------------------------------------------------------
+  SyncNodesFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/patchwork-sync-nodes-${Environment}
+      RetentionInDays: 30
+
+  LifecycleWorkerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/patchwork-lifecycle-worker-${Environment}
+      RetentionInDays: 30
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  SyncApiEndpoint:
+    Description: "POST endpoint for WatermelonDB sync payloads"
+    Value: !Sub https://${PatchworkApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api/sync
+    Export:
+      Name: !Sub PatchworkSyncApiEndpoint-${Environment}
+
+  SyncNodesFunctionArn:
+    Description: "ARN of the SyncNodes Lambda function"
+    Value: !GetAtt SyncNodesFunction.Arn
+    Export:
+      Name: !Sub PatchworkSyncNodesFunctionArn-${Environment}
+
+  PatchworkNodesTableName:
+    Description: "DynamoDB table name"
+    Value: !Ref PatchworkNodesTable
+    Export:
+      Name: !Sub PatchworkNodesTableName-${Environment}
+
+  PatchworkNodesTableArn:
+    Description: "DynamoDB table ARN"
+    Value: !GetAtt PatchworkNodesTable.Arn
+    Export:
+      Name: !Sub PatchworkNodesTableArn-${Environment}
+
+  LifecycleWorkerFunctionArn:
+    Description: "ARN of the LifecycleWorker Lambda function"
+    Value: !GetAtt LifecycleWorkerFunction.Arn
+    Export:
+      Name: !Sub PatchworkLifecycleWorkerFunctionArn-${Environment}
+
+  LifecycleScheduleRule:
+    Description: "EventBridge rule name for the daily lifecycle cron"
+    Value: !Sub patchwork-lifecycle-daily-${Environment}

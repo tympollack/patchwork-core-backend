@@ -1,225 +1,175 @@
-# PatchWork
+# PatchWork Core Backend
 
-A mobile application for capturing photos with GPS metadata and cryptographic hashing, built with React Native and Expo.
+Express 5 + TypeScript backend for the PatchWork civic infrastructure mapping platform.
 
-## 📱 Project Overview
-
-PatchWork is a mobile application that allows users to:
-- Capture photos using device camera
-- Automatically tag photos with GPS coordinates
-- Calculate SHA-256 cryptographic hashes of images locally
-- Store and manage photo metadata
-
-## 🏗️ Project Structure
+## Architecture
 
 ```
-patchwork/
-├── frontend/              # React Native mobile app (Expo SDK 55)
-│   ├── src/
-│   │   ├── components/   # React components
-│   │   │   └── CaptureScreen.tsx
-│   │   └── utils/       # Utility functions
-│   │       └── imageHash.ts
-│   ├── __tests__/        # Jest test files
-│   ├── App.tsx          # Main app component
-│   ├── package.json     # Dependencies
-│   └── app.json         # Expo configuration
-├── src/                 # Backend server (Node.js/TypeScript)
-├── .env.example         # Environment variables template
-├── .gitignore          # Git ignore rules
-└── README.md           # This file
+Mobile Client (React Native / Expo)
+        │
+        │  POST /api/ports/request-upload  (JWT required)
+        ▼
+ patchwork-core-backend  (Render — Node 20 / Express 5)
+        │
+        │  Returns R2 presigned PUT URL
+        ▼
+ Cloudflare R2 — patchwork-ports-stag  (staging bucket)
+        │
+        │  R2 object:create → Queue notification
+        ▼
+ Cloudflare Worker — patchwork-upload-processor
+   1. SHA-256 via Web Crypto
+   2. Copy staging → patchwork-ports  (production bucket)
+   3. Upsert patchwork.nodes via Supabase REST
+   4. Delete staging object
+        │
+        ▼
+ Supabase Postgres — patchwork schema
+   • patchwork.nodes
+   • patchwork.impact_reports
+   • patchwork.field_notes
 ```
 
-## 🚀 Getting Started
+> **Schema ownership:** The `patchwork` schema is provisioned exclusively by
+> [`sunshade-db-platform`](https://github.com/tympollack/sunshade-db-platform)
+> via Supabase migrations. Do not run `src/migrate.ts` against production — it
+> manages only the legacy `public.nodes` table and is deprecated.
+
+> **AWS / SAM retired:** The `sam/` directory is kept for reference only.
+> Do **not** deploy the SAM stack. See [`sam/RETIRED.md`](sam/RETIRED.md) for
+> the migration map and teardown instructions.
+
+## Getting Started
 
 ### Prerequisites
 
-- Node.js (v22 or higher)
-- npm or yarn
-- Expo Go app on your mobile device (for testing)
-- Git
+- Node.js 20+
+- npm
+- A Supabase project with the `patchwork` schema applied
+- Cloudflare account with R2 enabled
 
-### Frontend Setup (Mobile App)
-
-```bash
-cd frontend
-npm install
-npm start
-```
-
-Then scan the QR code with Expo Go app on your mobile device.
-
-### Backend Setup
+### Setup
 
 ```bash
 # Install dependencies
 npm install
 
-# Copy environment variables
+# Copy and fill in env vars
 cp .env.example .env
+# Edit .env — see Environment Variables section below
 
-# Edit .env with your configuration
-# DATABASE_URL, AWS credentials, etc.
-
-# Start the server
-npm start
+# Run the dev server
+npm run dev
 ```
 
-## 🧪 Testing
-
-### Frontend Tests
+## Testing
 
 ```bash
-cd frontend
+# Run all tests (vitest)
 npm test
+
+# Watch mode
+npm run test:watch
+
+# Coverage
+npm run test:coverage
 ```
 
-**Test Coverage**: 17 tests, 100% passing
-- Image hash utility tests
-- Camera component tests
-- Permission handling tests
+Test suites:
+- `src/routes/ports.test.ts` — presign endpoint (happy path, timeout 503, SDK error 500)
+- `src/routes/worker.test.ts` — Cloudflare Worker queue consumer (ack, retry, R2 cleanup, Supabase payload)
 
-## 📱 Mobile App Features
+## API Reference
 
-### Core Functionality
-
-- **Camera Capture**: Take photos using device camera (front/back)
-- **GPS Tagging**: Automatic location tagging with each photo
-- **SHA-256 Hashing**: Local cryptographic hash calculation
-- **Permission Management**: Proper handling of camera and location permissions
-
-### Tech Stack
-
-- **Framework**: React Native with Expo SDK 55
-- **Language**: TypeScript 5.9
-- **Testing**: Jest 29.7 + React Native Testing Library 12.9
-- **Native Modules**:
-  - `expo-camera` v55 - Camera access and photo capture
-  - `expo-location` v55 - GPS coordinate retrieval
-  - `expo-crypto` v55 - SHA-256 hashing
-  - `expo-file-system` v55 - File operations
-
-## 🔐 Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-```env
-# Database Configuration
-DATABASE_URL=postgresql://user:password@host:port/database
-PORT=3000
-
-# AWS credentials for S3 presigned URL generation
-AWS_ACCESS_KEY_ID=your_aws_access_key_id
-AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
-AWS_REGION=us-east-2
+All storage-write endpoints require a valid Supabase JWT:
+```
+Authorization: Bearer <supabase_access_token>
 ```
 
-## 📦 Dependencies
+### `POST /api/ports/request-upload`
 
-### Frontend (mobile)
-- `expo` ~55.0.0
-- `expo-camera` ~55.0.0
-- `expo-location` ~55.1.10
-- `expo-crypto` ~55.0.0
-- `expo-file-system` ~55.0.0
-- `react` 19.2.0
-- `react-native` 0.83.6
+Returns a Cloudflare R2 presigned PUT URL. The mobile client uploads the raw image directly.
 
-### Backend
-- See `package.json` in root directory
-
-## 🧩 API Documentation
-
-### Image Hashing
-
-```typescript
-import { calculateImageHash } from './src/utils/imageHash';
-
-const hash = await calculateImageHash('file:///path/to/image.jpg');
-// Returns: SHA-256 hash as hex string
+**Response:**
+```json
+{
+  "upload_id":   "e171a48f-847c-48fb-8103-8a11ee5c721f",
+  "presigned_url": "https://...",
+  "object_key":  "ports/e171a48f-847c-48fb-8103-8a11ee5c721f.jpg",
+  "method":      "PUT",
+  "required_headers": { "Content-Type": "image/jpeg" },
+  "expires_in_seconds": 900
+}
 ```
 
-### Camera Component
+**Error responses:**
+- `401` — Missing or invalid JWT
+- `403` — Hardware attestation failed
+- `503` — R2 presign timed out (`Retry-After: 5`)
+- `500` — R2 SDK error
 
-The `CaptureScreen` component handles:
-- Camera permission requests
-- Location permission requests
-- Photo capture with GPS coordinates
-- Image hash calculation
+### `POST /api/cron/bounty-trigger`
+### `POST /api/cron/archive-nodes`
 
-## 📱 Device Requirements
+Called by cron-job.org. Auth: `Authorization: Bearer <CRON_SECRET>`.
 
-- **Android**: Android 5.0+ (API level 21+)
-- **iOS**: iOS 13.4+
-- **Physical Device Recommended**: Camera and GPS features work best on real devices
+### `GET /health`
 
-## 🔧 Troubleshooting
+Returns `{ status: "ok", timestamp: "..." }`. No auth required.
 
-### Frontend Issues
+## Environment Variables
 
-**Camera not working:**
-- Ensure you're testing on a physical device
-- Check device permissions for camera and location
-- Verify Expo Go app is on SDK 55
+Copy `.env.example` to `.env`:
 
-**Tests failing:**
-- Run `npm install` to ensure dependencies are installed
-- Clear cache: `npm start --clear`
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | ✅ | Supabase Postgres connection string |
+| `PORT` | — | Server port (default: 3000) |
+| `SUPABASE_URL` | ✅ | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | ✅ | Service role key (for cron queries) |
+| `SUPABASE_ANON_KEY` | ✅ | Anon key (for JWT validation in requireAuth) |
+| `R2_ACCOUNT_ID` | ✅ | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | ✅ | R2 API token access key |
+| `R2_SECRET_ACCESS_KEY` | ✅ | R2 API token secret key |
+| `R2_BUCKET_NAME` | ✅ | Staging bucket name (e.g. `patchwork-ports-stag`) |
+| `R2_PUBLIC_URL` | — | Custom R2 domain for public asset URLs |
+| `CRON_SECRET` | ✅ | Bearer token expected from cron-job.org |
+| `WEBHOOK_URL` | ✅ | Critter-bounty webhook target URL |
 
-### Backend Issues
+## Cloudflare Worker Setup
 
-**Database connection errors:**
-- Verify DATABASE_URL in .env
-- Check database server is running
-- Ensure credentials are correct
-
-**AWS S3 errors:**
-- Verify AWS credentials in .env
-- Check bucket permissions
-- Ensure region is correct
-
-## 🚀 Deployment
-
-### Frontend (Expo)
+The worker lives in `workers/patchwork-upload-processor/`. After merging:
 
 ```bash
-cd frontend
-# Build for production
-npx expo build:android
-# or
-npx expo build:ios
+cd workers/patchwork-upload-processor
+npm install
+
+# Set secrets (never commit these)
+wrangler secret put SUPABASE_URL
+wrangler secret put SUPABASE_SERVICE_KEY
+
+# Deploy
+wrangler deploy
 ```
 
-### Backend
+Required Cloudflare resources (create in dashboard before deploying):
+1. R2 bucket `patchwork-ports-stag` (staging)
+2. R2 bucket `patchwork-ports` (production)
+3. Queue `patchwork-upload-queue`
+4. Queue `patchwork-upload-dlq` (dead-letter)
+5. R2 event notification on `patchwork-ports-stag` → `patchwork-upload-queue` (trigger: `object:create`)
 
-See backend-specific documentation in `src/` directory.
+## Cron Jobs (cron-job.org)
 
-## 📝 Development Workflow
+| Job | URL | Schedule | Auth |
+|-----|-----|----------|------|
+| Bounty trigger | `POST /api/cron/bounty-trigger` | Daily 00:05 UTC | `Authorization: Bearer <CRON_SECRET>` |
+| Archive nodes | `POST /api/cron/archive-nodes` | Daily 00:10 UTC | `Authorization: Bearer <CRON_SECRET>` |
 
-1. **Clone the repository**
-2. **Install dependencies** (both frontend and backend)
-3. **Set up environment variables** from `.env.example`
-4. **Run tests** to verify setup
-5. **Start development servers**
-6. **Make changes and test**
-7. **Commit and push**
+## Deployment (Render)
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-## 📄 License
-
-This project is part of the PatchWork application suite.
-
-## 📞 Support
-
-For issues and questions, please refer to the project documentation or contact the development team.
+Set all env vars from the table above in the Render dashboard, then push to `staging`.
+Render auto-deploys on branch push.
 
 ---
 

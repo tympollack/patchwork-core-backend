@@ -1,15 +1,17 @@
 {
-  "name": "patchwork",
+  "name": "patchwork-core-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "PatchWork civic infrastructure backend — Express API + Cloudflare Worker pipeline",
   "main": "index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "migrate": "ts-node src/migrate.ts",
-    "test:s3": "ts-node test-s3.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "teardown": "ts-node src/teardown.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [],
   "author": "",
@@ -18,9 +20,9 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1073.0",
     "@aws-sdk/s3-request-presigner": "^3.1073.0",
+    "@supabase/supabase-js": "^2.49.0",
     "axios": "^1.18.0",
     "dotenv": "^17.4.2",
-    "expo": "^56.0.12",
     "express": "^5.2.1",
     "pg": "^8.22.0"
   },
@@ -28,8 +30,9 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.0.0",
     "@types/pg": "^8.20.0",
-    "@types/react": "~19.2.14",
+    "@vitest/coverage-v8": "^3.0.0",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
   }
 }
