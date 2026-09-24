@@ -46,7 +46,9 @@ function getR2Client(): S3Client {
  */
 router.post('/request-upload', async (req: Request, res: Response): Promise<void> => {
   const start = Date.now();
-  console.log(`[TRACE] POST /api/ports/request-upload | body: ${JSON.stringify(req.body)}`);
+  // Log field count only — never log req.body contents; attestation tokens or
+  // other caller-controlled metadata must not persist in production logs.
+  console.log(`[TRACE] POST /api/ports/request-upload | fields: ${Object.keys(req.body ?? {}).length} | user: ${(req as any).userId ?? 'unknown'}`);
 
   const attestation = mockHardwareAttestation();
   if (!attestation.success) {

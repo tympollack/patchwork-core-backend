@@ -9,9 +9,18 @@ async function migrate(): Promise<void> {
     console.log('✓ search_path set');
 
     // -------------------------------------------------------------------------
-    // nodes — the hub table
-    // Replaces the old geometry-based nodes table with a flat lat/lng model
-    // compatible with the mobile client's WatermelonDB schema.
+    // nodes — legacy table in public schema
+    //
+    // ⚠️  SCHEMA OWNERSHIP NOTE
+    // This migration manages only the legacy `public.nodes` table which predates
+    // the patchwork schema split. The canonical production schema is:
+    //
+    //   patchwork.nodes / patchwork.impact_reports / patchwork.field_notes
+    //
+    // Those tables are provisioned exclusively by the sunshade-db-platform repo
+    // via Supabase migrations (20260919000001_patchwork_schema.sql).
+    // The cron routes and Cloudflare Worker both target patchwork.nodes, NOT public.nodes.
+    // This migrate.ts file should be considered deprecated for production use.
     // -------------------------------------------------------------------------
     await client.query(`SET search_path TO public, auth;`);
     await client.query(`

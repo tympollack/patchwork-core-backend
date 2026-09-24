@@ -4,6 +4,7 @@ import nodesRouter from './routes/nodes';
 import portsRouter from './routes/ports';
 import storageRouter from './routes/storage';
 import cronRouter from './routes/cron';
+import { requireAuth } from './middleware/requireAuth';
 
 dotenv.config();
 
@@ -15,8 +16,12 @@ app.use(express.json());
 
 // Routes
 app.use('/api/nodes', nodesRouter);
-app.use('/api/ports', portsRouter);
-app.use('/api/storage', storageRouter);
+
+// Storage presign endpoints — requireAuth guards both so unauthenticated callers
+// cannot obtain upload URLs, fill R2, or trigger the processing pipeline.
+app.use('/api/ports',   requireAuth, portsRouter);
+app.use('/api/storage', requireAuth, storageRouter); // legacy path — see storage.ts deprecation notice
+
 app.use('/api/cron', cronRouter);
 
 // Health check

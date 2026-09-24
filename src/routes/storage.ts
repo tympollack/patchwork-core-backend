@@ -15,14 +15,21 @@ function getSupabaseAdmin() {
 }
 
 /**
- * POST /api/storage/request-upload
+ * POST /api/storage/request-upload  ⚠️  DEPRECATED
  *
- * Returns a Supabase Storage signed upload URL.
- * The mobile client PUTs the image directly to Supabase Storage.
+ * @deprecated Use POST /api/ports/request-upload instead.
+ *
+ * This endpoint returns a Supabase Storage signed upload URL. Uploads via this
+ * path bypass the R2 Queue Worker pipeline — they skip SHA-256 hashing, the
+ * staging→production copy, and the patchwork.nodes upsert.
+ *
+ * It will be removed once all mobile clients have migrated to /api/ports.
+ * See: workers/patchwork-upload-processor/ for the canonical pipeline.
  */
 router.post('/request-upload', async (req: Request, res: Response): Promise<void> => {
   const start = Date.now();
-  console.log(`[TRACE] POST /api/storage/request-upload | body: ${JSON.stringify(req.body)}`);
+  // Log field count only — do not log req.body; signed tokens must not persist in logs.
+  console.log(`[TRACE] POST /api/storage/request-upload [DEPRECATED] | fields: ${Object.keys(req.body ?? {}).length} | user: ${(req as any).userId ?? 'unknown'}`);
 
   try {
     const supabase = getSupabaseAdmin();
