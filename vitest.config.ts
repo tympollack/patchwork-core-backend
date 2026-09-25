@@ -7,12 +7,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'workers/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      include: ['src/routes/**/*.ts'],
-      exclude: ['src/routes/**/*.test.ts', 'src/migrate.ts', 'src/teardown.ts'],
+      include: ['src/routes/**/*.ts', 'workers/**/src/**/*.ts'],
+      exclude: ['src/routes/**/*.test.ts', 'workers/**/src/**/*.test.ts', 'src/migrate.ts', 'src/teardown.ts'],
     },
   },
 });

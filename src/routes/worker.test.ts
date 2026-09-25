@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 // ---------------------------------------------------------------------------
 // Inline the helpers we want to unit-test without importing the full Worker
 // (which requires Cloudflare Workers runtime globals like R2Bucket)
+// Full unified worker integration tests live in workers/patchwork-upload-processor/src/index.test.ts
 // ---------------------------------------------------------------------------
 
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {

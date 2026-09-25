@@ -1,9 +1,14 @@
 name = "patchwork-upload-processor"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Public environment variables
+[vars]
+R2_BUCKET_NAME = "patchwork-ports-stag"
 
 # R2 bucket bindings
-# Secrets (SUPABASE_URL, SUPABASE_SERVICE_KEY) set via: wrangler secret put
+# Secrets (SUPABASE_URL, SUPABASE_SERVICE_KEY, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, CRON_SECRET) set via: wrangler secret put
 
 [[r2_buckets]]
 binding    = "R2_STAGING"
@@ -19,3 +24,7 @@ max_batch_size    = 10
 max_batch_timeout = 30
 max_retries       = 3
 dead_letter_queue = "patchwork-upload-dlq"
+
+# Native Cron Triggers (bypasses external cron-job.org and Render)
+[triggers]
+crons = ["5 0 * * *", "10 0 * * *"]
